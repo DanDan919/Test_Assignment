@@ -107,10 +107,14 @@ CPU/in-memory операции Base64, Regex и AES остаются synchronous
 
 ## Provided test fixtures
 
-Если в корне присутствуют `json_payload_1.txt` и `json_payload_2.txt`, их можно
-отправить в API и сохранить фактические responses как `json_result_1.txt` и
-`json_result_2.txt`. Эти employer fixture-файлы в текущем checkout отсутствуют;
-fake payload/result-файлы не добавляются.
+В корне находятся оригинальные fixture-файлы задания:
+`json_payload_1.txt`, `json_payload_2.txt`, `web-page.txt`, а также фактические
+ответы API `json_result_1.txt` и `json_result_2.txt`.
+
+Payload-файлы отправляются в API напрямую. Result-файлы содержат только тела
+реальных HTTP-ответов, сохранённые в UTF-8 с отступами.
+
+Проверка показала, что `page_b64` в обоих payload совпадает, но отдельный `web-page.txt` из исходного набора имеет отличающееся содержимое; файл сохранён без изменений.
 
 ## pgAdmin
 
@@ -127,14 +131,19 @@ PGADMIN_REPLACE_SERVERS_ON_STARTUP=True
 
 PostgreSQL password передаётся через `PGPASS_FILE` и `docker/pgadmin/pgpass`; вручную добавлять PostgreSQL connection и вводить DB password не требуется.
 
-Официальный pgAdmin server mode требует web login. Используются development credentials:
+В локальном test environment pgAdmin запускается в desktop mode без web login:
+сервер PostgreSQL и credentials заранее настроены, поэтому ручной login или
+добавление connection не требуется.
+
+Development credentials всё ещё заданы в Compose для bootstrap конфигурационной
+БД pgAdmin:
 
 ```text
 email:    admin@example.com
 password: admin
 ```
 
-Полное отключение web login не включено: документация pgAdmin требует `PGADMIN_DEFAULT_EMAIL` и `PGADMIN_DEFAULT_PASSWORD`, а отключение server mode для web container официально не рекомендуется.
+Это предназначено только для локального тестового окружения.
 
 ## Validation error codes
 

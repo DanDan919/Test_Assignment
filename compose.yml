@@ -39,10 +39,11 @@ services:
       PGADMIN_DISABLE_POSTFIX: "true"
       PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
       PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
+      PGADMIN_CONFIG_SERVER_MODE: "False"
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
       PGPASS_FILE: /pgadmin4/pgpass
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
       - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
