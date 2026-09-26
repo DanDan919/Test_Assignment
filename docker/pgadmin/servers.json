@@ -1,0 +1,17 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "TestTask PostgreSQL",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "testtask",
+      "Username": "testtask",
+      "SSLMode": "prefer",
+      "ConnectionParameters": {
+        "sslmode": "prefer",
+        "connect_timeout": 10
+      }
+    }
+  }
+}

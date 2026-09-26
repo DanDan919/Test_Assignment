@@ -1,0 +1,72 @@
+using FluentValidation;
+using Microsoft.AspNetCore.Mvc;
+using Npgsql;
+using TestTask.Api.Data;
+using TestTask.Api.Models;
+using TestTask.Api.Services;
+using TestTask.Api.Validation;
+
+var builder = WebApplication.CreateBuilder(args);
+
+var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres");
+if (string.IsNullOrWhiteSpace(postgresConnectionString))
+{
+    throw new InvalidOperationException(
+        "ConnectionStrings:Postgres configuration is required.");
+}
+
+builder.Services.AddSingleton(NpgsqlDataSource.Create(postgresConnectionString));
+builder.Services.AddSingleton<DatabaseInitializer>();
+
+builder.Services
+    .AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+        options.JsonSerializerOptions.WriteIndented = true;
+    });
+
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+builder.Services.AddScoped<IValidator<ProcessRequest>, ProcessRequestValidator>();
+builder.Services.AddScoped<IElementStore, PostgresElementStore>();
+builder.Services.AddScoped<IHtmlProcessingService, HtmlProcessingService>();
+
+builder.Services.Configure<ApiBehaviorOptions>(options =>
+{
+    options.InvalidModelStateResponseFactory = context =>
+    {
+        var message = context.ModelState.Values
+            .SelectMany(value => value.Errors)
+            .Select(error => error.ErrorMessage)
+            .FirstOrDefault(message => !string.IsNullOrWhiteSpace(message))
+            ?? "The request body is invalid.";
+
+        return new BadRequestObjectResult(
+            ProcessResponse.Failure(ErrorCodes.ValidationError, message));
+    };
+});
+
+var app = builder.Build();
+
+await using (var scope = app.Services.CreateAsyncScope())
+{
+    var databaseInitializer = scope.ServiceProvider.GetRequiredService<DatabaseInitializer>();
+    await databaseInitializer.InitializeAsync(app.Lifetime.ApplicationStopping);
+}
+
+app.UseSwagger(options =>
+{
+    options.RouteTemplate = "api/swagger/{documentName}/swagger.json";
+});
+
+app.UseSwaggerUI(options =>
+{
+    options.RoutePrefix = "api/swagger";
+    options.SwaggerEndpoint("/api/swagger/v1/swagger.json", "TestTask API v1");
+});
+
+app.MapControllers();
+
+app.Run();
