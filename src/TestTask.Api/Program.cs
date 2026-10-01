@@ -67,6 +67,7 @@ app.UseSwaggerUI(options =>
     options.SwaggerEndpoint("/api/swagger/v1/swagger.json", "TestTask API v1");
 });
 
+app.MapGet("/", () => Results.Redirect("/api/swagger"));
 app.MapControllers();
 
 app.Run();
