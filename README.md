@@ -92,7 +92,7 @@ Tests cover validation codes, strict UTF-8/Base64 handling, AngleSharp selectors
 missing attributes, email order including duplicates, AES-256 ECB with no padding,
 trailing zero bytes, and response contracts.
 
-Последний подтверждённый результат: 31 passed, 0 failed, 0 skipped.
+Последний подтверждённый результат: 32 passed, 0 failed, 0 skipped.
 
 Email duplicates are intentionally preserved in source order. A missing HTML
 attribute is represented by an empty string, while the element is still counted

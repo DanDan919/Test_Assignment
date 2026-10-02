@@ -112,6 +112,22 @@ public sealed class HtmlProcessingServiceTests
     }
 
     [Fact]
+    public async Task Exception_looking_plaintext_is_still_successful_decryption()
+    {
+        const string plaintext = "AES Error: Object reference not set to an instance of an object.";
+
+        var response = await CreateService().ProcessAsync(
+            TestData.CreateRequest(
+                ciphertext: TestData.Encrypt(Encoding.ASCII.GetBytes(plaintext))),
+            CancellationToken.None);
+
+        Assert.Equal(0, response.IsError);
+        Assert.Equal(string.Empty, response.ErrorCode);
+        Assert.Equal(string.Empty, response.ErrorMessage);
+        Assert.Equal(plaintext, response.DecryptedPlainText);
+    }
+
+    [Fact]
     public async Task Trailing_null_bytes_are_not_removed()
     {
         var plaintext = new byte[16];
