@@ -14,7 +14,9 @@ public sealed class ProcessRequestValidator : AbstractValidator<ProcessRequest>
             .WithMessage("The selector field is required.")
             .Must(value => !string.IsNullOrWhiteSpace(value))
             .WithErrorCode(ErrorCodes.RequiredSelector)
-            .WithMessage("The selector field must not be blank.");
+            .WithMessage("The selector field must not be blank.")
+            .MaximumLength(ProcessingLimits.SelectorCharacters)
+            .WithErrorCode(ErrorCodes.LimitExceeded);
 
         RuleFor(request => request.Attribute)
             .Cascade(CascadeMode.Stop)
@@ -23,13 +25,17 @@ public sealed class ProcessRequestValidator : AbstractValidator<ProcessRequest>
             .WithMessage("The attribute field is required.")
             .Must(value => !string.IsNullOrWhiteSpace(value))
             .WithErrorCode(ErrorCodes.RequiredAttribute)
-            .WithMessage("The attribute field must not be blank.");
+            .WithMessage("The attribute field must not be blank.")
+            .MaximumLength(ProcessingLimits.AttributeCharacters)
+            .WithErrorCode(ErrorCodes.LimitExceeded);
 
         RuleFor(request => request.UrlB64)
             .Cascade(CascadeMode.Stop)
             .NotEmpty()
             .WithErrorCode(ErrorCodes.RequiredUrlBase64)
             .WithMessage("The url_b64 field is required.")
+            .MaximumLength(ProcessingLimits.UrlBase64Characters)
+            .WithErrorCode(ErrorCodes.LimitExceeded)
             .Must(IsValidBase64)
             .WithErrorCode(ErrorCodes.InvalidUrlBase64)
             .WithMessage("The url_b64 field is not valid Base64.");
@@ -39,6 +45,8 @@ public sealed class ProcessRequestValidator : AbstractValidator<ProcessRequest>
             .NotEmpty()
             .WithErrorCode(ErrorCodes.RequiredPageBase64)
             .WithMessage("The page_b64 field is required.")
+            .MaximumLength(ProcessingLimits.PageBase64Characters)
+            .WithErrorCode(ErrorCodes.LimitExceeded)
             .Must(IsValidBase64)
             .WithErrorCode(ErrorCodes.InvalidPageBase64)
             .WithMessage("The page_b64 field is not valid Base64.");
@@ -48,6 +56,8 @@ public sealed class ProcessRequestValidator : AbstractValidator<ProcessRequest>
             .NotEmpty()
             .WithErrorCode(ErrorCodes.RequiredKeyBase64)
             .WithMessage("The key_bytes_b64 field is required.")
+            .MaximumLength(ProcessingLimits.KeyBase64Characters)
+            .WithErrorCode(ErrorCodes.LimitExceeded)
             .Must(IsValidBase64)
             .WithErrorCode(ErrorCodes.InvalidKeyBase64)
             .WithMessage("The key_bytes_b64 field is not valid Base64.")
@@ -60,6 +70,8 @@ public sealed class ProcessRequestValidator : AbstractValidator<ProcessRequest>
             .NotEmpty()
             .WithErrorCode(ErrorCodes.RequiredEncryptedTextBase64)
             .WithMessage("The encrypted_text_bytes_b64 field is required.")
+            .MaximumLength(ProcessingLimits.CiphertextBase64Characters)
+            .WithErrorCode(ErrorCodes.LimitExceeded)
             .Must(IsValidBase64)
             .WithErrorCode(ErrorCodes.InvalidEncryptedTextBase64)
             .WithMessage("The encrypted_text_bytes_b64 field is not valid Base64.")

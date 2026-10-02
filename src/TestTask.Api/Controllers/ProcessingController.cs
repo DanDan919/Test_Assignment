@@ -1,6 +1,5 @@
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
-using System.Data.Common;
 using TestTask.Api.Models;
 using TestTask.Api.Services;
 using TestTask.Api.Validation;
@@ -11,8 +10,7 @@ namespace TestTask.Api.Controllers;
 [Route("api/process")]
 public sealed class ProcessingController(
     IValidator<ProcessRequest> validator,
-    IHtmlProcessingService processingService,
-    ILogger<ProcessingController> logger) : ControllerBase
+    IHtmlProcessingService processingService) : ControllerBase
 {
     [HttpPost]
     [Consumes("application/json")]
@@ -21,6 +19,11 @@ public sealed class ProcessingController(
     [ProducesResponseType(typeof(ProcessResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProcessResponse), StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType(typeof(ProcessResponse), StatusCodes.Status500InternalServerError)]
+    [ProducesResponseType(typeof(ProcessResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProcessResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProcessResponse), StatusCodes.Status408RequestTimeout)]
+    [ProducesResponseType(typeof(ProcessResponse), StatusCodes.Status413PayloadTooLarge)]
+    [ProducesResponseType(typeof(ProcessResponse), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ProcessResponse>> ProcessAsync(
         [FromBody] ProcessRequest? request,
         CancellationToken cancellationToken)
@@ -41,36 +44,14 @@ public sealed class ProcessingController(
                 ? ErrorCodes.ValidationError
                 : failure.ErrorCode;
 
-            return BadRequest(ProcessResponse.Failure(errorCode, failure.ErrorMessage));
+            return new ObjectResult(ProcessResponse.Failure(errorCode, failure.ErrorMessage))
+            {
+                StatusCode = errorCode == ErrorCodes.LimitExceeded ? 413 : 400
+            };
         }
 
-        try
-        {
-            var response = await processingService.ProcessAsync(request, cancellationToken);
-            return ToHttpResult(response);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (DbException exception)
-        {
-            logger.LogError(exception, "Database error while processing request.");
-            return StatusCode(
-                StatusCodes.Status500InternalServerError,
-                ProcessResponse.Failure(
-                    ErrorCodes.DatabaseError,
-                    $"Database error: {exception.Message}"));
-        }
-        catch (Exception exception)
-        {
-            logger.LogError(exception, "Unexpected error while processing request.");
-            return StatusCode(
-                StatusCodes.Status500InternalServerError,
-                ProcessResponse.Failure(
-                    ErrorCodes.InternalError,
-                    $"Internal error: {exception.Message}"));
-        }
+        var response = await processingService.ProcessAsync(request, cancellationToken);
+        return ToHttpResult(response);
     }
 
     private static ActionResult<ProcessResponse> ToHttpResult(ProcessResponse response)
@@ -93,6 +74,9 @@ public sealed class ProcessingController(
 
             ErrorCodes.DatabaseError or ErrorCodes.InternalError =>
                 StatusCodes.Status500InternalServerError,
+
+            ErrorCodes.LimitExceeded => StatusCodes.Status413PayloadTooLarge,
+            ErrorCodes.RequestTimeout => StatusCodes.Status408RequestTimeout,
 
             _ => StatusCodes.Status422UnprocessableEntity
         };

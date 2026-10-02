@@ -1,0 +1,48 @@
+{
+    admin off
+    log {
+        format filter {
+            wrap json
+            fields {
+                request>headers>X-Api-Key delete
+                request>headers>Authorization delete
+                request>headers>Cookie delete
+            }
+        }
+    }
+    servers {
+        timeouts {
+            read_header 10s
+            read_body 30s
+            write 30s
+            idle 60s
+        }
+    }
+}
+
+{$PUBLIC_DOMAIN} {
+    log
+    request_body {
+        max_size 1MB
+    }
+    header {
+        -Server
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+        Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+        Cache-Control no-store
+    }
+    reverse_proxy api:8090 {
+        # Caddy sets these itself and ignores client-supplied forwarding headers.
+        # ASP.NET Core trusts only this proxy's fixed address.
+        transport http {
+            response_header_timeout 25s
+        }
+    }
+    handle_errors {
+        header Content-Type application/json
+        respond `{"is_error":1,"error_code":"INVALID_REQUEST","error_message":"HTTP request rejected by proxy.","elements_count":0,"emails_count":0,"url":"","decrypted_plain_text":"","elements_attr_list":[],"emails_list":[]}` {err.status_code}
+    }
+}

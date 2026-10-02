@@ -25,4 +25,11 @@ public static class ErrorCodes
     public const string InvalidDecryptedTextUtf8 = "INVALID_DECRYPTED_TEXT_UTF8";
     public const string DecryptionError = "DECRYPTION_ERROR";
     public const string ProcessingError = "PROCESSING_ERROR";
+    public const string LimitExceeded = "LIMIT_EXCEEDED";
+    public const string RequestTooLarge = "REQUEST_TOO_LARGE";
+    public const string RateLimitExceeded = "RATE_LIMIT_EXCEEDED";
+    public const string RequestTimeout = "REQUEST_TIMEOUT";
+    public const string Unauthorized = "UNAUTHORIZED";
+    public const string Forbidden = "FORBIDDEN";
+    public const string HttpsRequired = "HTTPS_REQUIRED";
 }

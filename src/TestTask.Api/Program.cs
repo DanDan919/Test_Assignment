@@ -4,11 +4,13 @@ using Npgsql;
 using TestTask.Api.Data;
 using TestTask.Api.Models;
 using TestTask.Api.Services;
+using TestTask.Api.Security;
 using TestTask.Api.Validation;
 
 var builder = WebApplication.CreateBuilder(args);
+ApiSecurity.Configure(builder);
 
-var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres");
+var postgresConnectionString = ApiSecurity.ReadSecret(builder.Configuration, "ConnectionStrings:Postgres");
 if (string.IsNullOrWhiteSpace(postgresConnectionString))
 {
     throw new InvalidOperationException(
@@ -24,6 +26,7 @@ builder.Services
     {
         options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
         options.JsonSerializerOptions.WriteIndented = true;
+        options.JsonSerializerOptions.MaxDepth = 16;
     });
 
 builder.Services.AddEndpointsApiExplorer();
@@ -35,13 +38,22 @@ builder.Services.AddScoped<IHtmlProcessingService, HtmlProcessingService>();
 
 builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
+    options.SuppressMapClientErrors = true;
     options.InvalidModelStateResponseFactory = context =>
     {
-        var message = context.ModelState.Values
+        var message = builder.Environment.IsDevelopment() ? context.ModelState.Values
             .SelectMany(value => value.Errors)
             .Select(error => error.ErrorMessage)
             .FirstOrDefault(message => !string.IsNullOrWhiteSpace(message))
-            ?? "The request body is invalid.";
+            ?? "The request body is invalid." : "The request body is invalid.";
+
+        var tooLarge = context.ModelState.Values.SelectMany(value => value.Errors)
+            .Any(error => error.Exception is BadHttpRequestException { StatusCode: 413 });
+        if (tooLarge)
+        {
+            return new ObjectResult(ProcessResponse.Failure(ErrorCodes.RequestTooLarge,
+                "The request body must not exceed 1 MiB.")) { StatusCode = 413 };
+        }
 
         return new BadRequestObjectResult(
             ProcessResponse.Failure(ErrorCodes.ValidationError, message));
@@ -49,6 +61,7 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 });
 
 var app = builder.Build();
+ApiSecurity.Use(app);
 
 await using (var scope = app.Services.CreateAsyncScope())
 {
@@ -56,18 +69,21 @@ await using (var scope = app.Services.CreateAsyncScope())
     await databaseInitializer.InitializeAsync(app.Lifetime.ApplicationStopping);
 }
 
-app.UseSwagger(options =>
+if (app.Environment.IsDevelopment())
 {
-    options.RouteTemplate = "api/swagger/{documentName}/swagger.json";
-});
+    app.UseSwagger(options =>
+    {
+        options.RouteTemplate = "api/swagger/{documentName}/swagger.json";
+    });
 
-app.UseSwaggerUI(options =>
-{
-    options.RoutePrefix = "api/swagger";
-    options.SwaggerEndpoint("/api/swagger/v1/swagger.json", "TestTask API v1");
-});
+    app.UseSwaggerUI(options =>
+    {
+        options.RoutePrefix = "api/swagger";
+        options.SwaggerEndpoint("/api/swagger/v1/swagger.json", "TestTask API v1");
+    });
 
-app.MapGet("/", () => Results.Redirect("/api/swagger"));
+    app.MapGet("/", () => Results.Redirect("/api/swagger"));
+}
 app.MapControllers();
 
 app.Run();

@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: postgres:18
+    image: testtask-postgres-hardened
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
     environment:
       POSTGRES_DB: testtask
       POSTGRES_USER: testtask
@@ -23,27 +26,48 @@ services:
       ASPNETCORE_URLS: http://0.0.0.0:8090
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=testtask;Username=testtask;Password=testtask
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
     volumes:
-      - ./src:/workspace/src
+      - ./src:/workspace/src:ro
+      - ./NuGet.Config:/workspace/NuGet.Config:ro
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /workspace/src/TestTask.Api/bin:size=128m,uid=1654,gid=1654,mode=0700
+      - /workspace/src/TestTask.Api/obj:size=64m,uid=1654,gid=1654,mode=0700
     depends_on:
       postgres:
         condition: service_healthy
     restart: on-failure
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 768m
+    cpus: 2
+    pids_limit: 256
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   pgadmin:
-    image: dpage/pgadmin4:9.18
+    image: testtask-pgadmin-hardened
+    build:
+      context: .
+      dockerfile: docker/pgadmin/Dockerfile
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@example.com
       PGADMIN_DEFAULT_PASSWORD: admin
       PGADMIN_DISABLE_POSTFIX: "true"
+      PGADMIN_LISTEN_PORT: "8080"
       PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
       PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
       PGADMIN_CONFIG_SERVER_MODE: "False"
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_CONFIG_ALLOWED_HOSTS: "['localhost', '127.0.0.1']"
       PGPASS_FILE: /pgadmin4/pgpass
     ports:
-      - "127.0.0.1:8080:80"
+      - "127.0.0.1:8080:8080"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
       - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
@@ -51,6 +75,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    cpus: 1
+    pids_limit: 128
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   postgres_data:

@@ -13,3 +13,10 @@ TestResults/
 appsettings.Local.json
 appsettings.*.local.json
 *.pfx
+.env
+.env.*
+!.env.production.example
+.secrets/
+*.key
+*.pem
+security-audit*.json

@@ -8,3 +8,14 @@
 docker-compose*.yml
 *.user
 *.suo
+.env
+.env.*
+.secrets/
+*.pfx
+*.pem
+*.key
+tests/
+TestResults/
+json_payload*.txt
+json_result*.txt
+web-page.txt

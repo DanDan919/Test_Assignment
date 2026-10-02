@@ -41,8 +41,8 @@ dotnet run
 
 ## Compose services
 
-- `api` — .NET 10 SDK container; исходники монтируются из `./src` в `/workspace/src`;
-- `postgres` — официальный `postgres:18`;
+- `api` — .NET 10 SDK container; исходники монтируются read-only из `./src` в `/workspace/src`;
+- `postgres` — image на основе официального `postgres:18` с обновлёнными OS packages;
 - `pgadmin` — официальный `dpage/pgadmin4:9.18`.
 
 PostgreSQL использует:
@@ -92,7 +92,9 @@ Tests cover validation codes, strict UTF-8/Base64 handling, AngleSharp selectors
 missing attributes, email order including duplicates, AES-256 ECB with no padding,
 trailing zero bytes, and response contracts.
 
-Последний подтверждённый результат: 32 passed, 0 failed, 0 skipped.
+Security regression tests additionally cover authentication, HTTPS enforcement,
+trusted-proxy handling, input/output limits, exception redaction, rate limiting,
+concurrency, and cooperative request cancellation.
 
 Email duplicates are intentionally preserved in source order. A missing HTML
 attribute is represented by an empty string, while the element is still counted
@@ -165,3 +167,148 @@ INVALID_AES_CIPHERTEXT_LENGTH
 ```
 
 `VALIDATION_ERROR` используется как общий fallback для malformed request/model binding.
+
+## Безопасный локальный запуск
+
+`docker compose up --build` публикует API только на `127.0.0.1:8090`,
+pgAdmin — на `127.0.0.1:8080`. PostgreSQL не публикует host port.
+Этот Development mode сохраняет Swagger и pgAdmin без login для проверки задания.
+Тестовые credentials из README/Compose нельзя использовать на публичном сервере.
+
+API работает с UID 1654 (`app`), без Linux capabilities и с
+`no-new-privileges`. Source mount read-only; `bin`, `obj` и NuGet cache находятся
+на временных файловых системах. При каждом запуске по-прежнему выполняются
+restore (locked mode), build и run. Секреты, `.env`, сертификаты и отчёты
+исключены из Git и Docker build context. NuGet lock-файлы фиксируют dependency graph.
+
+Ограничения обработки:
+
+- HTTP body: 1 MiB; `page_b64`: 699052 символа (около 512 KiB decoded);
+- selector: 256 символов; attribute: 128; URL Base64: 8192;
+- ciphertext Base64: 87384 символа (около 64 KiB decoded); key Base64: 128;
+- не более 10000 DOM nodes, глубина DOM 128; 1000 selected elements / 1000 email
+  matches и 4 MiB суммарного `OuterHtml`;
+- 4 одновременных запроса, 60 запросов/минуту на instance, без очереди;
+- Regex timeout: 1 s; cooperative request timeout: 20 s; SQL command timeout: 10 s;
+- API проверяет storage budget таблицы `elements` (256 MiB) под transaction advisory lock.
+  Проверка оценивает размер следующей записи с запасом; это не disk quota для WAL,
+  временных файлов или записей, сделанных администратором. При заполнении запись
+  отклоняется; существующие данные автоматически не удаляются.
+
+Лимиты возвращают `LIMIT_EXCEEDED`/`REQUEST_TOO_LARGE` (413),
+`RATE_LIMIT_EXCEEDED` (429), `REQUEST_TIMEOUT` (408) в том же response contract.
+Таймаут отменяет async операции и проверяется между CPU этапами; синхронный
+`QuerySelectorAll` нельзя принудительно прервать через CancellationToken.
+Размер входа и container CPU/memory limits ограничивают этот риск.
+
+В Development `INTERNAL_ERROR` содержит Exception.Message согласно заданию.
+В Production неожиданные и DB errors возвращают общее сообщение; подробности
+пишутся только в server logs. Stack traces не возвращаются клиенту.
+JSON/415/404 ошибки также имеют response contract. CORS не включён;
+cross-site browser requests дополнительно отклоняются (403).
+API и pgAdmin принимают только ожидаемые Host headers, чтобы localhost binding
+не обходился через browser DNS rebinding. Локально разрешены localhost/127.0.0.1
+(API также IPv6 loopback); в Production API разрешён только `PUBLIC_DOMAIN`.
+
+URL и ссылки из HTML не скачиваются. AngleSharp использует `Configuration.Default`
+без network loader и JavaScript engine. `web-page.txt` остаётся reference fixture.
+SQL использует параметры. HTML хранится как данные: если позднее появится UI,
+он должен HTML-encode эти значения вместо вставки через `innerHTML`.
+AES ECB/NoPadding сохранён согласно заданию и не является рекомендуемым
+режимом шифрования для новых протоколов.
+
+## Публичный запуск
+
+Для deployment используется **отдельный** `compose.production.yml` (не override
+локального compose). Он имеет собственные volumes и PostgreSQL credentials.
+Наружу публикуется только Caddy на TCP 80/443. API и БД доступны внутри isolated
+Docker networks; pgAdmin в этом deployment отсутствует. API не имеет outbound
+internet connection. Swagger выключен. API runtime image не содержит SDK или
+source mount, работает non-root с read-only filesystem и resource limits.
+
+На машине deployment с PowerShell (Windows PowerShell либо PowerShell 7 на Linux):
+
+```powershell
+./scripts/New-ProductionSecrets.ps1 -Domain api.your-domain.example
+docker compose --env-file .env.production -f compose.production.yml config --quiet
+docker compose --env-file .env.production -f compose.production.yml build --pull --no-cache
+docker compose --env-file .env.production -f compose.production.yml up -d
+```
+
+Укажите настоящий domain, направьте DNS A/AAAA на server и откройте TCP 80/443.
+Caddy получает HTTPS certificate и перенаправляет HTTP на HTTPS. Ключ API
+передавайте только через HTTPS в `X-API-Key`; храните его в своём secret manager.
+Production отказывается запускаться без ключа (32-256 символов).
+Генератор создаёт cryptographically random ключ и разные DB passwords в
+`.secrets`, ограничивает права host directory и не выводит значения в console.
+Он не перезаписывает существующие secrets. Эти файлы не отправляются в Git.
+Compose secrets — read-only file mounts, а не encrypted secret vault.
+Их backup тоже должен быть защищён.
+
+API DB role `testtask_app` — NOSUPERUSER/NOCREATEDB/NOCREATEROLE/NOREPLICATION;
+bootstrap admin password не передаётся API. При первой инициализации отдельного
+volume скрипт создаёт роль; смена secret-файла на существующем volume сама по себе
+не меняет password PostgreSQL. Ротация требует согласованного ALTER ROLE и
+обновления API connection secret. API key загружается при старте, после ротации
+перезапустите API. Не удаляйте volumes для смены паролей.
+
+Proxy address `172.30.90.2` доверенный, API — `172.30.90.3`, сеть
+`172.30.90.0/24`. При конфликте подсети измените её и обе настройки согласованно.
+Forwarded headers от иных адресов игнорируются. Caddy очищает входящие forwarded
+headers по своему стандартному поведению; `X-API-Key` удаляется из proxy logs.
+Нет HTTP logging request bodies. HTTP cache отключён, добавлены HSTS,
+nosniff, frame protection и строгий CSP публичного JSON endpoint.
+
+Образы PostgreSQL, pgAdmin, Caddy и .NET обновляют OS packages при сборке.
+pgAdmin обновляет `urllib3` и не содержит ненужный runtime package installer
+`pip` с устаревшими vendored dependencies; работает с UID 5050, без capabilities
+и с `no-new-privileges` (container port 8080, host localhost:8080).
+Caddy 2.11.4 дополнительно собирается с Go 1.26.8 и исправленными
+`x/crypto`, `x/net`, gRPC dependencies; Go нужен только на build stage.
+В PostgreSQL Go-based `gosu` заменён маленьким wrapper над системным `setpriv`,
+который разрешает только переход к `postgres`; official entrypoint сохранён.
+Перед обновлением сохраняйте DB backup; регулярно пересобирайте с `--pull --no-cache`
+и проверяйте package/image advisories. Docker log rotation ограничивает объём logs.
+Нужны наблюдение за диском, backup и защита на уровне hosting provider от DDoS.
+Rate limiting одного instance не защищает канал связи от распределённой атаки.
+
+Публикация исходников на GitHub не запускает контейнеры и не открывает host ports.
+Рабочие secrets в Git хранить нельзя. Два AES key в employer payload —
+публичные fixture values из исходного задания, а не deployment secrets.
+
+## Повторная security-проверка
+
+Результаты фактически выполненного audit и оставшиеся upstream advisories:
+[SECURITY.md](SECURITY.md). Public deployment на внешнем сервере не выполнялся.
+
+```powershell
+dotnet restore TestTask.slnx --locked-mode
+dotnet build TestTask.slnx --no-restore
+dotnet test TestTask.slnx --no-build --no-restore
+dotnet list TestTask.slnx package --vulnerable --include-transitive
+docker compose config --quiet
+docker compose up -d --build
+./tests/security-http.ps1
+```
+
+Для isolated HTTPS verification production configuration:
+
+```powershell
+New-Item -ItemType Directory TestResults/security -Force
+./scripts/New-ProductionSecrets.ps1 -Domain api.audit.invalid -OutputDirectory TestResults/security
+$env:PUBLIC_DOMAIN = 'localhost'
+docker compose -f compose.production.yml -f tests/compose.security-test.yml -p testtask-security up -d --build
+docker cp testtask-security-proxy-1:/data/caddy/pki/authorities/local/root.crt TestResults/security/localhost-ca.crt
+./tests/security-http.ps1 -Production
+docker compose -f compose.production.yml -f tests/compose.security-test.yml -p testtask-security down
+```
+
+Тестовый override публикует только localhost:9443/9080; certificate chain и
+hostname проверяются через локальный CA (без `--insecure` и без установки CA в host).
+Существующие test secrets повторно не генерируйте. `down` сохраняет volumes.
+Не выполняйте `down -v`, если хотите сохранить данные.
+
+Отдельный PostgreSQL Windows можно ограничить localhost из elevated PowerShell
+через `scripts/Protect-LocalPostgres.ps1`: скрипт сохраняет backup
+`postgresql.conf`, меняет только `listen_addresses`, перезапускает указанную
+службу PostgreSQL 18 и проверяет listeners. Он не меняет Docker database.

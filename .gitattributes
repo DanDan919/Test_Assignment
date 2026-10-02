@@ -1,0 +1,6 @@
+# Docker entrypoint scripts must stay executable as POSIX text on Windows clones.
+*.sh text eol=lf
+# Preserve the original fixture/result bytes when checking out on Windows.
+/json_payload_*.txt -text
+/json_result_*.txt -text
+/web-page.txt -text

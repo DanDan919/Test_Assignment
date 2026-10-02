@@ -20,6 +20,12 @@ public sealed partial class HtmlProcessingService(
         ProcessRequest request,
         CancellationToken cancellationToken)
     {
+        if (!ProcessingLimits.IsWithinInputLimits(request))
+        {
+            return ProcessResponse.Failure(ErrorCodes.LimitExceeded,
+                "An input field exceeds the allowed size.");
+        }
+
         if (string.IsNullOrWhiteSpace(request.Selector))
         {
             return ProcessResponse.Failure(
@@ -59,11 +65,11 @@ public sealed partial class HtmlProcessingService(
         cancellationToken.ThrowIfCancellationRequested();
 
         IDocument document;
+        using var context = BrowsingContext.New(Configuration.Default);
         try
         {
             // The input is already in memory, but AngleSharp's OpenAsync API is
             // the appropriate library API for creating a document asynchronously.
-            var context = BrowsingContext.New(Configuration.Default);
             document = await context.OpenAsync(
                 response => response.Content(page),
                 cancellationToken);
@@ -72,33 +78,54 @@ public sealed partial class HtmlProcessingService(
         {
             throw;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
             return ProcessResponse.Failure(
                 ErrorCodes.ProcessingError,
-                $"HTML parsing failed: {exception.Message}");
+                "HTML parsing failed.");
         }
+
+        using var documentLifetime = document;
 
         cancellationToken.ThrowIfCancellationRequested();
 
         ElementExtractionResult elementResult;
         try
         {
-            elementResult = ExtractElements(document, request.Selector, request.Attribute);
+            CheckDocumentBounds(document, cancellationToken);
+            elementResult = ExtractElements(document, request.Selector, request.Attribute, cancellationToken);
         }
-        catch (DomException exception)
+        catch (DomException)
         {
             return ProcessResponse.Failure(
                 ErrorCodes.InvalidSelector,
-                $"The CSS selector is invalid: {exception.Message}");
+                "The CSS selector is invalid.");
+        }
+        catch (ProcessingLimitException)
+        {
+            return ProcessResponse.Failure(ErrorCodes.LimitExceeded,
+                "The HTML document or selected elements exceed processing limits.");
         }
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var emails = EmailRegex()
-            .Matches(page)
-            .Select(match => match.Value)
-            .ToList();
+        var emails = new List<string>();
+        try
+        {
+            foreach (Match match in EmailRegex().Matches(page))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (emails.Count >= ProcessingLimits.Emails)
+                {
+                    return ProcessResponse.Failure(ErrorCodes.LimitExceeded, "Too many email matches.");
+                }
+                emails.Add(match.Value);
+            }
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return ProcessResponse.Failure(ErrorCodes.RequestTimeout, "Email extraction timed out.");
+        }
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -141,20 +168,28 @@ public sealed partial class HtmlProcessingService(
         {
             decryptedPlainText = DecryptUtf8(ciphertext, key);
         }
-        catch (DecoderFallbackException exception)
+        catch (DecoderFallbackException)
         {
             return ProcessResponse.Failure(
                 ErrorCodes.InvalidDecryptedTextUtf8,
-                $"The decrypted plaintext is not valid UTF-8: {exception.Message}");
+                "The decrypted plaintext is not valid UTF-8.");
         }
-        catch (CryptographicException exception)
+        catch (CryptographicException)
         {
             return ProcessResponse.Failure(
                 ErrorCodes.DecryptionError,
-                $"AES decryption failed: {exception.Message}");
+                "AES decryption failed.");
         }
 
-        await elementStore.SaveAsync(elementResult.Items, cancellationToken);
+        try
+        {
+            await elementStore.SaveAsync(elementResult.Items, cancellationToken);
+        }
+        catch (ProcessingLimitException)
+        {
+            return ProcessResponse.Failure(ErrorCodes.LimitExceeded,
+                "The database storage budget has been reached.");
+        }
 
         return new ProcessResponse
         {
@@ -170,20 +205,54 @@ public sealed partial class HtmlProcessingService(
         };
     }
 
+    private static void CheckDocumentBounds(IDocument document, CancellationToken cancellationToken)
+    {
+        // Iterative traversal avoids recursive serialization/selector work on
+        // adversarially deep input. Parsing itself remains bounded by input size.
+        var pending = new Stack<(INode Node, int Depth)>();
+        pending.Push((document, 0));
+        var count = 0;
+        while (pending.TryPop(out var item))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (++count > ProcessingLimits.DomNodes || item.Depth > ProcessingLimits.DomDepth)
+            {
+                throw new ProcessingLimitException();
+            }
+            foreach (var child in item.Node.ChildNodes)
+            {
+                pending.Push((child, item.Depth + 1));
+            }
+        }
+    }
+
     private static ElementExtractionResult ExtractElements(
         IDocument document,
         string selector,
-        string attribute)
+        string attribute,
+        CancellationToken cancellationToken)
     {
         var selectedElements = document.QuerySelectorAll(selector);
+        if (selectedElements.Length > ProcessingLimits.Elements)
+        {
+            throw new ProcessingLimitException();
+        }
         var items = new List<ElementRecord>(selectedElements.Length);
+        var htmlBytes = 0;
 
         foreach (var element in selectedElements)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             // A missing attribute is represented as an empty string. The element
             // still counts and its OuterHtml remains available for DB persistence.
             var attributeValue = element.GetAttribute(attribute) ?? string.Empty;
-            items.Add(new ElementRecord(attributeValue, element.OuterHtml));
+            var html = element.OuterHtml;
+            htmlBytes += StrictUtf8.GetByteCount(html);
+            if (htmlBytes > ProcessingLimits.StoredHtmlBytes)
+            {
+                throw new ProcessingLimitException();
+            }
+            items.Add(new ElementRecord(attributeValue, html));
         }
 
         return new ElementExtractionResult(items);
@@ -204,7 +273,15 @@ public sealed partial class HtmlProcessingService(
 
         // PaddingMode.None means no bytes are removed here. In particular,
         // trailing '\0' bytes remain part of the returned plaintext.
-        return StrictUtf8.GetString(plaintextBytes);
+        try
+        {
+            return StrictUtf8.GetString(plaintextBytes);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plaintextBytes);
+            CryptographicOperations.ZeroMemory(key);
+        }
     }
 
     private static bool TryDecodeUtf8Base64(
@@ -225,10 +302,10 @@ public sealed partial class HtmlProcessingService(
             decoded = StrictUtf8.GetString(bytes);
             return true;
         }
-        catch (DecoderFallbackException exception)
+        catch (DecoderFallbackException)
         {
             decoded = string.Empty;
-            error = ProcessResponse.Failure(errorCode, $"{errorMessage} {exception.Message}");
+            error = ProcessResponse.Failure(errorCode, errorMessage);
             return false;
         }
     }
@@ -253,19 +330,21 @@ public sealed partial class HtmlProcessingService(
             error = null;
             return true;
         }
-        catch (FormatException exception)
+        catch (FormatException)
         {
             decoded = [];
-            error = ProcessResponse.Failure(errorCode, $"{errorMessage} {exception.Message}");
+            error = ProcessResponse.Failure(errorCode, errorMessage);
             return false;
         }
     }
 
     [GeneratedRegex(
         @"(?<![\w.+-])[\w.!#$%&'*+/=?^_`{|}~-]+@[\w-]+(?:\.[\w-]+)+(?![\w-])",
-        RegexOptions.CultureInvariant)]
+        RegexOptions.CultureInvariant,
+        matchTimeoutMilliseconds: 1000)]
     private static partial Regex EmailRegex();
 
     private sealed record ElementExtractionResult(
         IReadOnlyList<ElementRecord> Items);
+
 }
