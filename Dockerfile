@@ -13,4 +13,4 @@ USER $APP_UID
 
 EXPOSE 8090
 
-ENTRYPOINT ["sh", "-c", "dotnet restore /workspace/src/TestTask.Api/TestTask.Api.csproj --locked-mode && dotnet build /workspace/src/TestTask.Api/TestTask.Api.csproj --no-restore && dotnet run --project /workspace/src/TestTask.Api/TestTask.Api.csproj --no-build --no-restore --urls http://0.0.0.0:8090"]
+ENTRYPOINT ["sh", "-c", "dotnet restore /workspace/src/TestTask.Api/TestTask.Api.csproj --locked-mode --artifacts-path /tmp/artifacts && dotnet build /workspace/src/TestTask.Api/TestTask.Api.csproj --no-restore --artifacts-path /tmp/artifacts && dotnet run --project /workspace/src/TestTask.Api/TestTask.Api.csproj --no-build --no-restore --artifacts-path /tmp/artifacts --urls http://0.0.0.0:8090"]

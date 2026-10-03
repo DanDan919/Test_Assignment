@@ -32,8 +32,6 @@ services:
       - ./NuGet.Config:/workspace/NuGet.Config:ro
     tmpfs:
       - /tmp:size=256m,mode=1777
-      - /workspace/src/TestTask.Api/bin:size=128m,uid=1654,gid=1654,mode=0700
-      - /workspace/src/TestTask.Api/obj:size=64m,uid=1654,gid=1654,mode=0700
     depends_on:
       postgres:
         condition: service_healthy

@@ -39,6 +39,10 @@ dotnet build
 dotnet run
 ```
 
+Все три команды используют `--artifacts-path /tmp/artifacts`: build output и
+intermediate files находятся в writable tmpfs, а не в read-only исходниках.
+Чистый clone не требует предварительного создания host-каталогов `bin/obj`.
+
 ## Compose services
 
 - `api` — .NET 10 SDK container; исходники монтируются read-only из `./src` в `/workspace/src`;
@@ -102,10 +106,11 @@ and its `OuterHtml` is stored.
 
 ## Async
 
-Endpoint и service имеют async API. Реальный async используется прежде всего
-для I/O: AngleSharp document opening и PostgreSQL operations выполняются async.
-CPU/in-memory операции Base64, Regex и AES остаются synchronous; `Task.Run`
-для них намеренно не используется.
+Endpoint и service имеют async API. Реальный asynchronous I/O здесь — PostgreSQL
+connection, SQL commands и transaction APIs. AngleSharp `OpenAsync` принимает
+уже decoded HTML в памяти: async API не означает network I/O или ускорение парсинга.
+CPU/in-memory операции Base64, UTF-8, CSS selector, Regex и AES остаются synchronous;
+`Task.Run` для них намеренно не используется.
 
 ## Provided test fixtures
 
@@ -132,6 +137,10 @@ PGADMIN_REPLACE_SERVERS_ON_STARTUP=True
 Сервер использует host `postgres`, port `5432`, database `testtask` и user `testtask`.
 
 PostgreSQL password передаётся через `PGPASS_FILE` и `docker/pgadmin/pgpass`; вручную добавлять PostgreSQL connection и вводить DB password не требуется.
+
+`ConnectionParameters.passfile` явно указывает `/var/lib/pgadmin/.pgpass`.
+Официальный entrypoint копирует туда pgpass с правами `0600` при первой
+инициализации; явный passfile предотвращает отдельный запрос DB password.
 
 В локальном test environment pgAdmin запускается в desktop mode без web login:
 сервер PostgreSQL и credentials заранее настроены, поэтому ручной login или
@@ -278,6 +287,26 @@ Rate limiting одного instance не защищает канал связи 
 
 ## Повторная security-проверка
 
+### Docker Desktop: stale runtime sockets on Windows
+
+Если Docker Desktop не запускается с ошибкой `dockerInference` / `dockerSecretsEngine`
+(`The file cannot be accessed by the system`), выполните:
+
+```powershell
+./scripts/Repair-DockerDesktop.ps1
+docker compose up -d
+```
+
+Скрипт при недоступном engine останавливает только Docker Desktop и его WSL
+distribution, переименовывает disposable `%LOCALAPPDATA%\Docker\run` и
+`%LOCALAPPDATA%\docker-secrets-engine` в `*-broken-<timestamp>` и запускает Desktop.
+Images, volumes, database files и settings не удаляются; другие WSL distributions
+не останавливаются. При работающем engine скрипт ничего не меняет. Если отказано
+в доступе к процессам/каталогам, повторите из elevated PowerShell.
+Это recovery workaround для [известной ошибки Docker Desktop](https://github.com/docker/desktop-feedback/issues/531),
+а не исправление Compose или гарантия, что ошибка не повторится после следующего
+перезапуска. Не используйте Factory Reset, `down -v` или `wsl --unregister` для её устранения.
+
 Результаты фактически выполненного audit и оставшиеся upstream advisories:
 [SECURITY.md](SECURITY.md). Public deployment на внешнем сервере не выполнялся.
 
@@ -299,7 +328,7 @@ New-Item -ItemType Directory TestResults/security -Force
 $env:PUBLIC_DOMAIN = 'localhost'
 docker compose -f compose.production.yml -f tests/compose.security-test.yml -p testtask-security up -d --build
 docker cp testtask-security-proxy-1:/data/caddy/pki/authorities/local/root.crt TestResults/security/localhost-ca.crt
-./tests/security-http.ps1 -Production
+./tests/security-http.ps1 -Production -ProxyFailureProbe -ComposeProject testtask-security
 docker compose -f compose.production.yml -f tests/compose.security-test.yml -p testtask-security down
 ```
 
