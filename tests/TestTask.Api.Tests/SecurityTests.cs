@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
@@ -114,6 +116,33 @@ public sealed class SecurityTests
         var body = await AssertError(await client.PostAsJsonAsync("/api/process", TestData.CreateRequest()),
             HttpStatusCode.InternalServerError, ErrorCodes.DatabaseError);
         Assert.DoesNotContain("private-db-detail", body.ErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("Development", "private-db-detail")]
+    [InlineData("Production", "The request could not be processed.")]
+    public async Task Middleware_database_error_json_is_indented_and_preserves_contract(
+        string environment, string expectedMessage)
+    {
+        await using var app = await StartApp(environment, handler: _ => throw new NpgsqlException("private-db-detail"));
+        using var client = app.GetTestClient();
+        client.BaseAddress = new Uri("https://localhost");
+        if (environment == "Production") client.DefaultRequestHeaders.Add("X-API-Key", ApiKey);
+
+        var response = await client.PostAsJsonAsync("/api/process", TestData.CreateRequest());
+        var bytes = await response.Content.ReadAsByteArrayAsync();
+        var json = Encoding.UTF8.GetString(bytes);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType!.MediaType);
+        Assert.Equal("utf-8", response.Content.Headers.ContentType.CharSet);
+        Assert.Equal(bytes.LongLength, response.Content.Headers.ContentLength);
+        Assert.Contains("\n  \"is_error\": 1", json);
+        Assert.True(JsonNode.DeepEquals(
+            JsonSerializer.SerializeToNode(ProcessResponse.Failure(ErrorCodes.DatabaseError, expectedMessage)),
+            JsonNode.Parse(bytes)));
+        Assert.DoesNotContain("StackTrace", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(" at ", json, StringComparison.Ordinal);
     }
 
     [Fact]

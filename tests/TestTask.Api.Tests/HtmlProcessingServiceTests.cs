@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using TestTask.Api.Models;
 using TestTask.Api.Services;
 using TestTask.Api.Validation;
 
@@ -85,6 +87,40 @@ public sealed class HtmlProcessingServiceTests
         Assert.Equal(3, response.EmailsCount);
         Assert.Equal(
             ["one@example.com", "two@example.com", "one@example.com"],
+            response.EmailsList);
+    }
+
+    [Theory]
+    [InlineData("<div data-e='attr@example.org'></div>", "attr@example.org")]
+    [InlineData("<script>var x='script@example.net';</script>", "script@example.net")]
+    [InlineData("<p>plain@example.com</p>", "plain@example.com")]
+    [InlineData("<div data-e=\"attr@example.org\"></div>", "attr@example.org")]
+    [InlineData("<p>MiXeD+tag@Sub.Example.COM</p>", "MiXeD+tag@Sub.Example.COM")]
+    [InlineData("<p>first.last%tag@example.org</p>", "first.last%tag@example.org")]
+    public async Task Email_regex_excludes_surrounding_source_syntax(string page, string expectedEmail)
+    {
+        var response = await CreateService().ProcessAsync(
+            TestData.CreateRequest(page), CancellationToken.None);
+
+        Assert.Equal(0, response.IsError);
+        Assert.Equal(1, response.EmailsCount);
+        Assert.Equal([expectedEmail], response.EmailsList);
+    }
+
+    [Theory]
+    [InlineData("json_payload_1.txt")]
+    [InlineData("json_payload_2.txt")]
+    public async Task Emails_in_original_payloads_keep_all_five_matches_in_source_order(string filename)
+    {
+        var json = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", filename));
+        var request = JsonSerializer.Deserialize<ProcessRequest>(json)!;
+
+        var response = await CreateService().ProcessAsync(request, CancellationToken.None);
+
+        Assert.Equal(0, response.IsError);
+        Assert.Equal(5, response.EmailsCount);
+        Assert.Equal(
+            ["webmaster@rbc.ru", "privet@test.com", "hh_test_task@gmail.com", "letters@rbc.ru", "letters@rbc.ru"],
             response.EmailsList);
     }
 

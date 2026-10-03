@@ -22,6 +22,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\TestTask.Api\TestTask.Api.csproj" />
+    <None Include="../../json_payload_1.txt;../../json_payload_2.txt"
+          Link="Fixtures/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

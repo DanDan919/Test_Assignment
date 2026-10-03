@@ -13,6 +13,7 @@ namespace TestTask.Api.Security;
 
 public sealed class ApiSecurity
 {
+    private static readonly JsonSerializerOptions ErrorJsonOptions = new() { WriteIndented = true };
     private readonly bool development;
     private readonly byte[]? keyHash;
     private readonly HashSet<string> allowedHosts;
@@ -208,7 +209,7 @@ public sealed class ApiSecurity
         CancellationToken cancellationToken)
     {
         context.Response.StatusCode = status;
-        var body = JsonSerializer.SerializeToUtf8Bytes(ProcessResponse.Failure(code, message));
+        var body = JsonSerializer.SerializeToUtf8Bytes(ProcessResponse.Failure(code, message), ErrorJsonOptions);
         context.Response.ContentType = "application/json; charset=utf-8";
         // A complete, bounded response lets proxies finish early rejections even
         // when the client's request body is still arriving.

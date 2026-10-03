@@ -338,8 +338,9 @@ public sealed partial class HtmlProcessingService(
         }
     }
 
+    // Practical unquoted addresses: quotes and '=' delimit HTML/JS syntax, not the local part.
     [GeneratedRegex(
-        @"(?<![\w.+-])[\w.!#$%&'*+/=?^_`{|}~-]+@[\w-]+(?:\.[\w-]+)+(?![\w-])",
+        @"(?<![\w.%+-])[\w.%+-]+@[\w-]+(?:\.[\w-]+)+(?![\w-])",
         RegexOptions.CultureInvariant,
         matchTimeoutMilliseconds: 1000)]
     private static partial Regex EmailRegex();
