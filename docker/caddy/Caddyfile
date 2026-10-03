@@ -43,6 +43,16 @@
     }
     handle_errors {
         header Content-Type application/json
-        respond `{"is_error":1,"error_code":"INVALID_REQUEST","error_message":"HTTP request rejected by proxy.","elements_count":0,"emails_count":0,"url":"","decrypted_plain_text":"","elements_attr_list":[],"emails_list":[]}` {err.status_code}
+        respond `{
+  "is_error": 1,
+  "error_code": "INVALID_REQUEST",
+  "error_message": "HTTP request rejected by proxy.",
+  "elements_count": 0,
+  "emails_count": 0,
+  "url": "",
+  "decrypted_plain_text": "",
+  "elements_attr_list": [],
+  "emails_list": []
+}` {err.status_code}
     }
 }

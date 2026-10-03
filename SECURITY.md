@@ -1,5 +1,12 @@
 # Security audit — 2026-10-02
 
+Это исторический snapshot, не актуальная гарантия отсутствия CVE. Финальная
+проверка 2026-10-03 повторила runtime/tests и offline Gitleaks; новый image scan
+не выполнялся. Указанные ниже image advisory counts нельзя выдавать за свежий PASS.
+Production proxy error JSON также проверяется на отступы: opt-in
+`tests/security-http.ps1 -Production -ProxyFailureProbe` временно останавливает
+только API указанного isolated test project и восстанавливает его в `finally`.
+
 Проверены исходники, dependency graph, Git history/worktree, контейнеры,
 фактические Windows listeners и два реально запущенных Docker Compose окружения.
 Это проверка данного проекта, а не гарантия отсутствия всех уязвимостей ОС

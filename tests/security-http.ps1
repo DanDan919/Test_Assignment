@@ -1,4 +1,9 @@
-param([switch] $Production)
+param(
+    [switch] $Production,
+    [switch] $ProxyFailureProbe,
+    [ValidatePattern('^[a-z0-9][a-z0-9_-]*$')]
+    [string] $ComposeProject = 'testtask-security'
+)
 $ErrorActionPreference = 'Stop'
 $taskRepository = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $taskRepository
@@ -36,6 +41,9 @@ function Test-Http {
         $taskBody = Get-Content -LiteralPath $taskBodyPath -Raw | ConvertFrom-Json
         if ($ErrorCode -and ($taskBody.is_error -ne 1 -or $taskBody.error_code -notin ($ErrorCode -split ','))) {
             throw "$Name returned an unexpected error contract"
+        }
+        if (!(Get-Content -LiteralPath $taskBodyPath -Raw).Contains("`n  `"is_error`"")) {
+            throw "$Name returned JSON without indentation"
         }
         if ($ExpectedResult) {
             $taskExpected = Get-Content -LiteralPath $ExpectedResult -Raw | ConvertFrom-Json | ConvertTo-Json -Depth 40 -Compress
@@ -97,5 +105,19 @@ $taskOversized = Join-Path $taskReportDirectory 'oversized.json'
 $taskTooLargeCode = if ($Production) { 'INVALID_REQUEST,REQUEST_TOO_LARGE' } else { 'REQUEST_TOO_LARGE' }
 Test-Http -Name "oversized-$Production" -Path '/api/process' -ExpectedStatus 413 -PayloadPath $taskOversized -ErrorCode $taskTooLargeCode
 Test-Http -Name "chunked-oversized-$Production" -Path '/api/process' -ExpectedStatus 413 -PayloadPath $taskOversized -ErrorCode $taskTooLargeCode -Headers 'Transfer-Encoding: chunked'
+if ($ProxyFailureProbe) {
+    if (!$Production) { throw 'Proxy failure probing requires the isolated Production test stack.' }
+    $taskApiContainers = @(docker compose -f compose.production.yml -f tests/compose.security-test.yml -p $ComposeProject ps -q api)
+    if ($LASTEXITCODE -ne 0 -or $taskApiContainers.Count -ne 1) { throw 'Expected one running API container in the specified test project.' }
+    $taskApiContainer = $taskApiContainers[0]
+    try {
+        docker stop $taskApiContainer | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Could not stop the test upstream API.' }
+        Test-Http -Name prod-proxy-unavailable -Path '/api/process' -ExpectedStatus 502 -ErrorCode INVALID_REQUEST -NoKey
+    } finally {
+        docker start $taskApiContainer | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Could not restore the test upstream API.' }
+    }
+}
 $taskResults | Format-Table -AutoSize
 $taskResults | ConvertTo-Json | Out-File -LiteralPath (Join-Path $taskReportDirectory "http-$Production.json") -Encoding utf8
